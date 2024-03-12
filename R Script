@@ -1,1 +1,375 @@
+setwd("C:/Users/pkcab/Lab_Work/DEG Analysis")
+All_CDE = read.csv("All_CDEs.txt", sep = '\t', head = F)
 
+library(TCGAbiolinks)
+library(SummarizedExperiment)
+Gene_exp = get(load("Gene_Expression_data.rdata"))
+GenExp.coldata=colData(Gene_exp)
+GenExp.matdata = assay(Gene_exp)
+library(dplyr)
+row.names(All_CDE) = All_CDE$V1
+All_CDE= All_CDE[,-1]
+
+Positive = All_CDE[,All_CDE[55,]== 'positive']
+Negative = All_CDE[,All_CDE[55,]== 'negative']
+x = t(Positive)
+x = x[,1]
+x = toupper(x)
+TP = GenExp.coldata[GenExp.coldata$shortLetterCode %in% "TP",]
+NT = GenExp.coldata[GenExp.coldata$shortLetterCode %in% "NT",]
+a1 = intersect(TP$patient,NT$patient)
+TP1 = TP[!TP$patient %in% a1,]
+y = t(Negative)
+y = toupper(y)
+pos1 = TP1[TP1$patient %in% x, ]
+neg1 = TP1[TP1$patient %in% y,]
+
+
+Pos_data = GenExp.matdata[,colnames(GenExp.matdata) %in% rownames(pos1)]
+Neg_data = GenExp.matdata[,colnames(GenExp.matdata) %in% rownames(neg1)]
+
+Pos_norm= TCGAanalyze_Normalization(Pos_data, geneInfoHT, method = "geneLength")
+positive_filtered<- TCGAanalyze_Filtering(tabDF = Pos_norm, method = "quantile",qnt.cut =  0.25)
+Neg_norm= TCGAanalyze_Normalization(Neg_data, geneInfoHT, method = "geneLength")
+negative_filtered<- TCGAanalyze_Filtering(tabDF = Neg_norm, method = "quantile",qnt.cut =  0.25)
+
+normal = GenExp.coldata[GenExp.coldata$shortLetterCode %in% "NT",]
+normal = GenExp.matdata[,colnames(GenExp.matdata) %in% rownames(normal)]
+normal= TCGAanalyze_Normalization(normal, geneInfoHT, method = "geneLength")
+normal<- TCGAanalyze_Filtering(tabDF = normal, method = "quantile",qnt.cut =  0.25)
+
+
+x= intersect(rownames(positive_filtered), rownames(negative_filtered))
+y = intersect(rownames(normal), x)
+
+normal = normal[rownames(normal) %in% y,]
+positive = positive_filtered[rownames(positive_filtered) %in% y,]
+negative = negative_filtered[rownames(negative_filtered) %in% y,]
+
+
+##edger
+library(edgeR)
+sample_info.edger <- factor(c(rep("Tumor", 83), rep("Normal", 44)))
+sample_info.edger <- relevel(sample_info.edger, ref = "Normal")
+edgeR.DGElist <- DGEList(counts = cbind(positive, normal), group = sample_info.edger)
+# get an impression of the coverage across samples
+summary(log2(rowSums(cpm(edgeR.DGElist))))
+keep <- rowSums(cpm(edgeR.DGElist) >= 1) >=63	#remove genes that do not have one count per million in at least 50% samples
+edgeR.DGElist <- edgeR.DGElist[keep,]
+dim(edgeR.DGElist$counts)
+edgeR.DGElist$samples$lib.size <- colSums(edgeR.DGElist$counts)
+edgeR.DGElist <- calcNormFactors(edgeR.DGElist, method = "TMM")
+design <- model.matrix(~sample_info.edger)
+edgeR.DGElist <- estimateDisp(edgeR.DGElist, design)
+edger_fit <- glmFit(edgeR.DGElist, design)
+edger_lrt <- glmLRT(edger_fit)
+DGE.results_edgeR <- topTags(edger_lrt, n = Inf , sort.by = "PValue", adjust.method = "BH") # to retrieve all genes
+DGE.results_edgeR2 = as.data.frame(DGE.results_edgeR)
+edger_up.resp01 <- subset(DGE.results_edgeR2, logFC > 1 & FDR < 0.01)
+edger_down.resp01 <- subset(DGE.results_edgeR2, logFC < -1 & FDR < 0.01)
+pos_edger_up = rownames(edger_up.resp01)
+pos_edger_down = rownames(edger_down.resp01)
+
+
+sample_info.edger <- factor(c(rep("Tumor", 372), rep("Normal", 44)))
+sample_info.edger <- relevel(sample_info.edger, ref = "Normal")
+edgeR.DGElist <- DGEList(counts = cbind(negative, normal), group = sample_info.edger)
+# get an impression of the coverage across samples
+summary(log2(rowSums(cpm(edgeR.DGElist))))
+keep <- rowSums(cpm(edgeR.DGElist) >= 1) >=208	#remove genes that do not have one count per million in at least 50% samples
+edgeR.DGElist <- edgeR.DGElist[keep,]
+dim(edgeR.DGElist$counts)
+edgeR.DGElist$samples$lib.size <- colSums(edgeR.DGElist$counts)
+edgeR.DGElist <- calcNormFactors(edgeR.DGElist, method = "TMM")
+design <- model.matrix(~sample_info.edger)
+edgeR.DGElist <- estimateDisp(edgeR.DGElist, design)
+edger_fit <- glmFit(edgeR.DGElist, design)
+edger_lrt <- glmLRT(edger_fit)
+DGE.results_edgeR <- topTags(edger_lrt, n = Inf , sort.by = "PValue", adjust.method = "BH") # to retrieve all genes
+DGE.results_edgeR2 = as.data.frame(DGE.results_edgeR)
+edger_up.resp01 <- subset(DGE.results_edgeR2, logFC > 1 & FDR < 0.01)
+edger_down.resp01 <- subset(DGE.results_edgeR2, logFC < -1 & FDR < 0.01)
+neg_edger_up = rownames(edger_up.resp01)
+neg_edger_down = rownames(edger_down.resp01)
+
+##Limma
+library(limma)
+sample_info.edger <- factor(c(rep("Tumor",83 ), rep("Normal", 44)))
+sample_info.edger <- relevel(sample_info.edger, ref = "Normal")
+edgeR.DGElist <- DGEList(counts = cbind(positive, normal), group = sample_info.edger)
+keep <- rowSums(cpm(edgeR.DGElist) >= 1) >= 63	#remove genes that do not have one count per million in at least 50% samples
+edgeR.DGElist <- edgeR.DGElist[keep,]
+edgeR.DGElist$samples$lib.size <- colSums(edgeR.DGElist$counts)
+edgeR.DGElist <- calcNormFactors(edgeR.DGElist, method = "TMM")
+design <- model.matrix(~sample_info.edger)
+rownames(design) <- colnames(edgeR.DGElist)
+voomTransformed <- voom(edgeR.DGElist, design, plot = FALSE)
+voomed.fitted <- lmFit(voomTransformed, design = design)
+voomed.fitted <- eBayes(voomed.fitted)
+colnames(design)
+DGE.results_limma <- topTable(voomed.fitted, coef = "sample_info.edgerTumor", number = Inf, adjust.method = "BH", sort.by = "logFC")
+limma_up.resp01 <- subset(DGE.results_limma, logFC > 1 & adj.P.Val < 0.01)
+limma_down.resp01 <- subset(DGE.results_limma, logFC < -1 & adj.P.Val < 0.01)
+pos_limma_up = rownames(limma_up.resp01)
+pos_limma_down = rownames(limma_down.resp01)
+
+sample_info.edger <- factor(c(rep("Tumor",372 ), rep("Normal", 44)))
+sample_info.edger <- relevel(sample_info.edger, ref = "Normal")
+edgeR.DGElist <- DGEList(counts = cbind(negative, normal), group = sample_info.edger)
+keep <- rowSums(cpm(edgeR.DGElist) >= 1) >= 208	#remove genes that do not have one count per million in at least 50% samples
+edgeR.DGElist <- edgeR.DGElist[keep,]
+edgeR.DGElist$samples$lib.size <- colSums(edgeR.DGElist$counts)
+edgeR.DGElist <- calcNormFactors(edgeR.DGElist, method = "TMM")
+design <- model.matrix(~sample_info.edger)
+rownames(design) <- colnames(edgeR.DGElist)
+voomTransformed <- voom(edgeR.DGElist, design, plot = FALSE)
+voomed.fitted <- lmFit(voomTransformed, design = design)
+voomed.fitted <- eBayes(voomed.fitted)
+colnames(design)
+DGE.results_limma <- topTable(voomed.fitted, coef = "sample_info.edgerTumor", number = Inf, adjust.method = "BH", sort.by = "logFC")
+limma_up.resp01 <- subset(DGE.results_limma, logFC > 1 & adj.P.Val < 0.01)
+limma_down.resp01 <- subset(DGE.results_limma, logFC < -1 & adj.P.Val < 0.01)
+neg_limma_up = rownames(limma_up.resp01)
+neg_limma_down = rownames(limma_down.resp01)
+
+#Deseq2
+library(DESeq2)
+ condition = factor(c(rep("Tumor", 83), rep("Normal", 44)))
+dds = DESeqDataSetFromMatrix(cbind(positive, normal), DataFrame(condition
+), ~ condition)
+ colData(dds)$condition <- relevel(colData(dds)$condition , "Normal")
+ dds = DESeq(dds)
+resultsNames(dds)
+res = results(dds, name="condition_Tumor_vs_Normal")
+ deseq.res = lfcShrink(dds, coef="condition_Tumor_vs_Normal", type="apeglm")
+resSig <- subset(res, padj < 0.01)
+resSig2 <- subset(res, abs(log2FoldChange) > 1 & padj < 0.05)
+deseq.upreg <- subset(deseq.res, log2FoldChange > 1 & padj < 0.01)
+ deseq.downreg <- subset(deseq.res, log2FoldChange < -1 & padj < 0.01)
+ pos_deseq2_up = rownames(deseq.upreg)
+ pos_deseq2_down = rownames(deseq.downreg)
+
+ condition = factor(c(rep("Tumor", 372), rep("Normal", 44)))
+ dds = DESeqDataSetFromMatrix(cbind(negative, normal), DataFrame(condition
+ ), ~ condition)
+ colData(dds)$condition <- relevel(colData(dds)$condition , "Normal")
+ dds = DESeq(dds)
+ resultsNames(dds)
+ res = results(dds, name="condition_Tumor_vs_Normal")
+ deseq.res = lfcShrink(dds, coef="condition_Tumor_vs_Normal", type="apeglm")
+ resSig <- subset(res, padj < 0.01)
+ resSig2 <- subset(res, abs(log2FoldChange) > 1 & padj < 0.05)
+ deseq.upreg <- subset(deseq.res, log2FoldChange > 1 & padj < 0.01)
+ deseq.downreg <- subset(deseq.res, log2FoldChange < -1 & padj < 0.01)
+ neg_deseq2_up = rownames(deseq.upreg)
+neg_deseq2_down = rownames(deseq.downreg)
+
+m = intersect(pos_edger_up, pos_limma_up)
+n = intersect(pos_deseq2_up, pos_limma_up)
+o= intersect(pos_edger_up, pos_deseq2_up)
+pos_up = unique(c(m,n,o))
+length(pos_up)
+
+m = intersect(pos_edger_down, pos_limma_down)
+n = intersect(pos_deseq2_down, pos_limma_down)
+o= intersect(pos_edger_down, pos_deseq2_down)
+pos_down = unique(c(m,n,o))
+length(pos_down)
+
+m = intersect(neg_edger_up, neg_limma_up)
+n = intersect(neg_deseq2_up, neg_limma_up)
+o= intersect(neg_edger_up, neg_deseq2_up)
+neg_up = unique(c(m,n,o))
+length(neg_up)
+
+m = intersect(neg_edger_down, neg_limma_down)
+n = intersect(neg_deseq2_down, neg_limma_down)
+o= intersect(neg_edger_down, neg_deseq2_down)
+neg_down = unique(c(m,n,o))
+length(neg_down)
+
+pos_DEG = c(pos_up, pos_down)
+length(pos_DEG)
+neg_DEG = c(neg_up, neg_down)
+length(neg_DEG)
+
+library(clusterProfiler)
+pos_DEG_ids <- bitr(pos_DEG, fromType="ENSEMBL", toType=c("UNIPROT", "ENTREZID", "SYMBOL"), OrgDb="org.Hs.eg.db")
+ neg_DEG_ids <- bitr(neg_DEG, fromType="ENSEMBL", toType=c("UNIPROT", "ENTREZID", "SYMBOL"), OrgDb="org.Hs.eg.db")
+
+#PIPS
+pips = read.table("PIPs database.txt", head=T)
+pips= data.frame(Gene_1= pips$Name, Gene_2=  pips$Name.1)
+head(pips)
+
+#STRING
+string = read.table("strng_main_file.txt", head = T)
+head(string)
+
+#PINA
+x = read.table("PINA.txt")
+dim(x)
+head(x)
+p <- bitr(x$V1, fromType="UNIPROT", toType=c("SYMBOL"), OrgDb="org.Hs.eg.db")
+q <- bitr(x$V3, fromType="UNIPROT", toType=c("SYMBOL"), OrgDb="org.Hs.eg.db")
+r = rbind(p,q)
+i1 <- match(x$V1, r$UNIPROT)
+x$Gene_1<- q$SYMBOL[i1]
+i1 <- match(x$V3, r$UNIPROT)
+x$Gene_2<- q$SYMBOL[i1]
+y = na.omit(x)
+dim(y)
+head(y)
+PINA = y[,4:5]
+head(PINA)
+
+#HIPPIE 
+hippie = read.csv("hippie_current.txt", sep ='\t', head=F)
+ hippie = data.frame(Gene_1= hippie$V1, Gene_2  = hippie$V3)
+ head(h)
+ hippie$Gene_1 = gsub("\\_.*", "", h$Gene_1)
+ hippie$Gene_2 = gsub("\\_.*", "", h$Gene_2)
+ head(hippie)
+ 
+colnames(pips)= colnames(string)= colnames(PINA)= colnames(hippie)
+ PPI_Data = rbind(pips, PINA,hippie)
+ 
+ #pos_graph
+ library(igraph)
+ a = PPI_Data[PPI_Data$Gene_1 %in% pos_DEG_ids$SYMBOL,]
+ a = a[a$Gene_2 %in% pos_DEG_ids$SYMBOL,]
+ dim(a)
+ a1 = graph.data.frame(a, directed = F)
+ a1= simplify(a1)
+ pos_graph = a1
+ 
+ write.graph(pos_graph, "pos_graph.txt.",  format = "ncol")
+ write.graph(neg_graph, "neg_graph.txt.",  format = "ncol")
+ 
+ 
+ pdf("pos_degree_distribution.pdf")
+ plot(log(degree_distribution(pos_graph)),ylab="log(Degree)",xlab="Nodes", col= "red")
+ dev.off()
+ 
+ pdf("pos_clustering.coff_degree_correlation.pdf")
+ plot(x = log(degree(pos_graph)), y = log(transitivity(pos_graph, type = "local")),xlab="log(Degree)",ylab="log(Clustering coefficient
+)", col= "darkgreen")
+ dev.off()
+ 
+ pdf("pos_betweenness_degree_correlation.pdf")
+ plot(log(betweenness(pos_graph)),log(degree(pos_graph)), xlab = "log(degree)", ylab = "log(Betweenness)", col= "blue")
+ dev.off()
+ 
+ a = PPI_Data[PPI_Data$Gene_1 %in% neg_DEG_ids$SYMBOL,]
+ a = a[a$Gene_2 %in% neg_DEG_ids$SYMBOL,]
+ dim(a)
+ a1 = graph.data.frame(a, directed = F)
+ a1= simplify(a1)
+ a1
+ neg_graph = a1
+ pdf("neg_degree_distribution.pdf")
+ plot(log(degree_distribution(neg_graph)),ylab="log(Degree)",xlab="Nodes", col= "red")
+ dev.off()
+ pdf("neg_clustering.coff_degree_correlation.pdf")
+ plot(x = log(degree(neg_graph)), y = log(transitivity(neg_graph, type = "local")),xlab="log(Degree)",ylab="log(Clustering coefficient
+)", col= "darkgreen")
+ dev.off()
+ pdf("neg_betweenness_degree_correlation.pdf")
+ plot(log(betweenness(neg_graph)),log(degree(neg_graph)), xlab = "log(degree)", ylab = "log(Betweenness)", col= "blue")
+ dev.off()
+
+ #Pathway, Gene ontology, Disease Ontlogy 
+DEG_list = list(pos_DEG_ids$ENTREZID, neg_DEG_ids$ENTREZID)
+names(DEG_list) = c("HPV+", "HPV-")
+library(clusterProfiler)
+DEG_KEGG <- compareCluster(DEG_list, fun="enrichKEGG", organism="hsa", pvalueCutoff=0.05)
+DEG_GO_CC= compareCluster(DEG_list, fun = "enrichGO", ont = "CC" ,  OrgDb='org.Hs.eg.db')
+DEG_GO_BP= compareCluster(DEG_list, fun = "enrichGO", ont = "BP" ,  OrgDb='org.Hs.eg.db')
+DEG_GO_MF= compareCluster(DEG_list, fun = "enrichGO", ont = "MF" ,  OrgDb='org.Hs.eg.db')
+DEG_DO <- compareCluster(DEG_list, fun="enrichDO", pvalueCutoff=0.05)
+
+pdf("KEGG_dotplot.pdf")
+dotplot(DEG_KEGG)
+dev.off()
+
+pdf("GO_CC_dotplot.pdf")
+dotplot(DEG_GO_CC)
+dev.off()
+pdf("GO_BP_dotplot.pdf")
+dotplot(DEG_GO_BP)
+dev.off()
+pdf("GO_MF_dotplot.pdf")
+dotplot(DEG_GO_MF)
+dev.off()
+
+pdf("DO_dotplot.pdf")
+dotplot(DEG_DO)
+dev.off()
+
+library(NetVA)
+pos_graph
+ heterogeneity(pos_graph)
+length(detectBottlenecks(pos_graph))
+length(detectHubs(pos_graph))
+assortativity_degree(pos_graph)
+ mean(degree(pos_graph))
+ mean(betweenness(pos_graph))
+diameter(pos_graph)
+transitivity(pos_graph)
+ mean(closeness(pos_graph))
+
+ neg_graph
+ heterogeneity(neg_graph)
+ length(detectBottlenecks(neg_graph))
+ length(detectHubs(neg_graph))
+ assortativity_degree(neg_graph)
+ mean(degree(neg_graph))
+ mean(betweenness(neg_graph))
+ diameter(neg_graph)
+ transitivity(neg_graph)
+ mean(closeness(neg_graph))
+ 
+
+a = vertex_attr(pos_graph)$name
+ ppi_pos_netva <- netva(a, pos_graph)
+ 
+ v <- vertex_attr(pos_graph)$name
+  pos_anc.outliers <- detectVPs(v,ppi_pos_netva[,1], "ANC")
+  pos_ND.outliers <- detectVPs(v,ppi_pos_netva[,2], "ND")
+  pos_NC.outliers <- detectVPs(v,ppi_pos_netva[,3], "NC")
+  pos_APL.outliers <- detectVPs(v,ppi_pos_netva[,4], "APL")
+  pos_BET.outliers <- detectVPs(v,ppi_pos_netva[,5], "BET")
+  pos_AP.outliers <- detectVPs(v,ppi_pos_netva[,6], "AP")
+  pos_NDR.outliers <- detectVPs(v,ppi_pos_netva[,7], "NDR")
+  pos_CC.outliers <- detectVPs(v,ppi_pos_netva[,8], "CC")
+  pos_HET.outliers <- detectVPs(v,ppi_pos_netva[,9], "HET")
+  
+  pathology = read.csv("pathology.tsv", head= T, sep = '\t')
+ p =  pathology[pathology$Cancer=='head and neck cancer',]
+ q = p[rowSums(p[4:6])>0,]
+ 
+ q1 = q[q$Gene.name %in% pos_hub,]
+ dim(q1)
+ 
+ q2 = q[q$Gene.name %in% neg_hub,]
+ dim(q2)
+ q2$Gene.name
+ 
+ r =  pathology[!pathology$Cancer %in%'head and neck cancer',]
+ r = r[rowSums(p[4:6])>0,]
+ a= pos_hub[!pos_hub %in% q1$Gene.name ]
+ b= neg_hub[!neg_hub %in% q2$Gene.name ]
+ 
+ 
+ dim(r)
+ r1 = r[r$Gene.name %in% a,]
+ dim(r1)
+ length(unique(r1$Gene.name))
+ unique(r1$Gene.name)
+ a[!a %in% unique(r1$Gene.name)]
+ 
+ r1 = r[r$Gene.name %in%  b,]
+ dim(r1)
+ length(unique(r1$Gene.name))
+ unique(r1$Gene.name)
+ b[! b%in% unique(r1$Gene.name)]
